@@ -1,0 +1,74 @@
+name: build-iso
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
+      options: --privileged
+    steps:
+      - name: Install tools
+        run: |
+          apt-get update
+          apt-get install -y git ca-certificates live-build debootstrap xorriso squashfs-tools
+
+      - uses: actions/checkout@v4
+
+      - name: Build system
+        run: |
+          set -o pipefail
+          chmod +x auto/*
+          df -h / | tee build.log
+          lb clean --purge || true
+          lb config
+          lb build 2>&1 | tee -a build.log
+
+      - name: Show result summary (always)
+        if: always()
+        run: |
+          {
+            echo "## Build summary"
+            echo "### Errors found"
+            echo '```'
+            grep -n -E "^E:|Unable to|unmet dependencies|No space left|dpkg: error|returned error" build.log | tail -n 25 || true
+            echo '```'
+            echo "### Last 60 lines"
+            echo '```'
+            tail -n 60 build.log
+            echo '```'
+            echo "### ISO files"
+            echo '```'
+            ls -lh *.iso 2>/dev/null || echo "no ISO was produced"
+            df -h / | tail -n 1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save the full log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        continue-on-error: true
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Hala OS build ${{ github.run_number }}
+          files: "*.iso"
+
+      - name: Backup copy of the ISO (if the release step failed)
+        uses: actions/upload-artifact@v4
+        with:
+          name: hala-iso
+          path: "*.iso"
+          compression-level: 0
